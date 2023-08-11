@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.18;
+import "forge-std/console.sol";
 
 import {BaseTokenizedStrategy} from "@tokenized-strategy/BaseTokenizedStrategy.sol";
+import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IAjnaPool} from "./interfaces/IAjnaPool.sol";
 
 // Import interfaces for many popular DeFi projects, or add your own!
 //import "../interfaces/<protocol>/<Interface>.sol";
@@ -25,10 +28,18 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 contract Strategy is BaseTokenizedStrategy {
     using SafeERC20 for ERC20;
 
+    IAjnaPool public pool;
+    uint256 trackedAmount;
+
     constructor(
         address _asset,
+        address _pool,
         string memory _name
-    ) BaseTokenizedStrategy(_asset, _name) {}
+    ) BaseTokenizedStrategy(_asset, _name) {
+      pool = IAjnaPool(_pool);
+      require(pool.quoteTokenAddress() == _asset, "!PoolToken");
+      ERC20(_asset).safeApprove(address(pool), type(uint256).max);
+    }
 
     /*//////////////////////////////////////////////////////////////
                 NEEDED TO BE OVERRIDEN BY STRATEGIST
@@ -46,9 +57,8 @@ contract Strategy is BaseTokenizedStrategy {
      * to deposit in the yield source.
      */
     function _deployFunds(uint256 _amount) internal override {
-        // TODO: implement deposit logice EX:
-        //
-        //      lendingpool.deposit(asset, _amount ,0);
+      // This method is not used since we would deposit to the pool through
+      // `addLiquidity()`
     }
 
     /**
@@ -73,9 +83,8 @@ contract Strategy is BaseTokenizedStrategy {
      * @param _amount, The amount of 'asset' to be freed.
      */
     function _freeFunds(uint256 _amount) internal override {
-        // TODO: implement withdraw logic EX:
-        //
-        //      lendingPool.withdraw(asset, _amount);
+      // Will not be used. Strategy will allocate 100% of funds
+      // until `removeLiquidity()` is called
     }
 
     /**
@@ -103,13 +112,28 @@ contract Strategy is BaseTokenizedStrategy {
     function _harvestAndReport()
         internal
         override
-        returns (uint256 _totalAssets)
-    {
-        // TODO: Implement harvesting logic and accurate accounting EX:
-        //
-        //      _claminAndSellRewards();
-        //      _totalAssets = aToken.balanceof(address(this)) + ERC20(asset).balanceOf(address(this));
-        _totalAssets = ERC20(asset).balanceOf(address(this));
+        returns (uint256 _totalAssets) {
+        _totalAssets = balanceOfWant() + trackedAmount;
+    }
+
+
+    function addLiquidity(uint256 _amount, uint256 _index) external onlyManagement {
+      trackedAmount = _amount;
+      pool.addQuoteToken(_amount, _index, block.timestamp, false);
+    }
+
+    function removeLiquidity(uint256 _amount, uint256 _index) external onlyManagement {
+      pool.removeQuoteToken(_amount, _index);
+      trackedAmount = 0;
+    }
+
+    function sweep() external onlyManagement {
+      ERC20 _asset = ERC20(asset);
+      _asset.transfer(TokenizedStrategy.management(), balanceOfWant());
+    }
+
+    function balanceOfWant() internal view returns (uint256) {
+      return ERC20(asset).balanceOf(address(this));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -177,8 +201,8 @@ contract Strategy is BaseTokenizedStrategy {
         address _owner
     ) public view override returns (uint256) {
         TODO: If desired Implement deposit limit logic and any needed state variables .
-        
-        EX:    
+
+        EX:
             uint256 totalAssets = TokenizedStrategy.totalAssets();
             return totalAssets >= depositLimit ? 0 : depositLimit - totalAssets;
     }
@@ -206,8 +230,8 @@ contract Strategy is BaseTokenizedStrategy {
         address _owner
     ) public view override returns (uint256) {
         TODO: If desired Implement withdraw limit logic and any needed state variables.
-        
-        EX:    
+
+        EX:
             return TokenizedStrategy.totalIdle();
     }
     */
